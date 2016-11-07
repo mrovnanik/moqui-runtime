@@ -103,41 +103,76 @@
     <#if sri.doBoundaryComments()><!-- BEGIN form-list[@name=${.node["@name"]}] --></#if>
     <#-- Use the formNode assembled based on other settings instead of the straight one from the file: -->
     <#assign formInstance = sri.getFormInstance(.node["@name"])>
-    <#assign formNode = formInstance.getFtlFormNode()>
-    <#assign formListColumnList = formInstance.getFormListColumnInfo()>
+    <#assign formListInfo = formInstance.makeFormListRenderInfo()>
+    <#assign formNode = formListInfo.getFormNode()>
+    <#assign mainColInfoList = formListInfo.getMainColInfo()>
+    <#assign subColInfoList = formListInfo.getSubColInfo()!>
+    <#assign hasSubColumns = subColInfoList?has_content>
+    <#assign numColumns = (mainColInfoList?size)!100>
+    <#if numColumns == 0><#assign numColumns = 100></#if>
     <#assign formId>${ec.getResource().expandNoL10n(formNode["@name"], "")}<#if sectionEntryIndex?has_content>_${sectionEntryIndex}</#if></#assign>
-    <#assign isMulti = formNode["@multi"]! == "true">
+    <#assign headerFormId = formId + "_header">
     <#assign skipStart = (formNode["@skip-start"]! == "true")>
     <#assign skipEnd = (formNode["@skip-end"]! == "true")>
     <#assign skipForm = (formNode["@skip-form"]! == "true")>
-    <#assign skipHeader = (formNode["@skip-header"]! == "true")>
+    <#assign skipHeader = !skipStart && (formNode["@skip-header"]! == "true")>
+    <#assign needHeaderForm = !skipHeader && formListInfo.isHeaderForm()>
+    <#assign isHeaderDialog = needHeaderForm && formNode["@header-dialog"]! == "true">
+    <#assign isMulti = !skipForm && formNode["@multi"]! == "true">
     <#assign formListUrlInfo = sri.makeUrlByType(formNode["@transition"], "transition", null, "false")>
     <#assign listName = formNode["@list"]>
-    <#assign listObject = formInstance.getListObject(formListColumnList)!>
+    <#assign listObject = formListInfo.getListObject(true)!>
     <#assign listHasContent = listObject?has_content>
 
+    <#-- all form elements outside table element and referred to with input/etc.@form attribute for proper HTML -->
+    <#if !(isMulti || skipForm) && listHasContent><#list listObject as listEntry>
+        ${sri.startFormListRow(formListInfo, listEntry, listEntry_index, listEntry_has_next)}
+        <form name="${formId}_${listEntry_index}" id="${formId}_${listEntry_index}" method="post" action="${formListUrlInfo.url}">
+            <#assign listEntryIndex = listEntry_index>
+            <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
+            <#-- hidden fields -->
+            <#assign hiddenFieldList = formListInfo.getListHiddenFieldList()>
+            <#list hiddenFieldList as hiddenField><@formListSubField hiddenField true false isMulti false/></#list>
+            <#assign listEntryIndex = "">
+        </form>
+        ${sri.endFormListRow()}
+    </#list></#if>
     <#if !skipStart>
-        <#assign needHeaderForm = formInstance.isHeaderForm()>
-        <#assign isHeaderDialog = needHeaderForm && formNode["@header-dialog"]! == "true">
-        <#if !skipHeader><@paginationHeaderModals formInstance formId isHeaderDialog formListColumnList/></#if>
+        <#if needHeaderForm && !isHeaderDialog>
+            <#assign curUrlInstance = sri.getCurrentScreenUrl()>
+        <form name="${headerFormId}" id="${headerFormId}" method="post" action="${curUrlInstance.url}">
+            <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
+            <#if orderByField?has_content><input type="hidden" name="orderByField" value="${orderByField}"></#if>
+            <#assign hiddenFieldList = formListInfo.getListHiddenFieldList()>
+            <#list hiddenFieldList as hiddenField><#if hiddenField["header-field"]?has_content><#recurse hiddenField["header-field"][0]/></#if></#list>
+        </form>
+        </#if>
+        <#if isMulti>
+        <form name="${formId}" id="${formId}" method="post" action="${formListUrlInfo.url}">
+            <input type="hidden" name="moquiFormName" value="${formNode["@name"]}">
+            <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
+            <input type="hidden" name="_isMulti" value="true">
+            <#if listHasContent><#list listObject as listEntry>
+                <#assign listEntryIndex = listEntry_index>
+                ${sri.startFormListRow(formListInfo, listEntry, listEntry_index, listEntry_has_next)}
+                <#-- hidden fields -->
+                <#assign hiddenFieldList = formListInfo.getListHiddenFieldList()>
+                <#list hiddenFieldList as hiddenField><@formListSubField hiddenField true false isMulti false/></#list>
+                ${sri.endFormListRow()}
+                <#assign listEntryIndex = "">
+            </#list></#if>
+        </form>
+        </#if>
+
+        <#if !skipHeader><@paginationHeaderModals formListInfo formId isHeaderDialog/></#if>
         <table class="table table-striped table-hover table-condensed" id="${formId}_table">
         <#if !skipHeader>
             <thead>
-                <@paginationHeader formInstance formId isHeaderDialog formListColumnList/>
+                <@paginationHeader formListInfo formId isHeaderDialog/>
 
-                <#if needHeaderForm>
-                    <#assign curUrlInstance = sri.getCurrentScreenUrl()>
-                    <#assign headerFormId = formId + "_header">
-                    <tr>
-                    <form name="${headerFormId}" id="${headerFormId}" method="post" action="${curUrlInstance.url}">
-                        <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
-                        <#if orderByField?has_content><input type="hidden" name="orderByField" value="${orderByField}"></#if>
-                        <#assign hiddenFieldList = formInstance.getListHiddenFieldList()>
-                        <#list hiddenFieldList as hiddenField><#if hiddenField["header-field"]?has_content><#recurse hiddenField["header-field"][0]/></#if></#list>
-                <#else>
-                    <tr>
-                </#if>
-                <#list formListColumnList as columnFieldList>
+                <#assign ownerForm = headerFormId>
+                <tr>
+                <#list mainColInfoList as columnFieldList>
                     <#-- TODO: how to handle column style? <th<#if fieldListColumn["@style"]?has_content> class="${fieldListColumn["@style"]}"</#if>> -->
                     <th>
                     <#list columnFieldList as fieldNode>
@@ -149,79 +184,85 @@
                     </#list>
                     </th>
                 </#list>
+                </tr>
+                <#if hasSubColumns>
+                    <tr><td colspan="${numColumns}" class="form-list-sub-row-cell"><div class="form-list-sub-rows"><table class="table table-striped table-hover table-condensed"><thead>
+                        <#list subColInfoList as subColFieldList><th>
+                            <#list subColFieldList as fieldNode>
+                                <#if !(ec.getResource().condition(fieldNode["@hide"]!, "") ||
+                                ((!fieldNode["@hide"]?has_content) && fieldNode?children?size == 1 &&
+                                (fieldNode?children[0]["hidden"]?has_content || fieldNode?children[0]["ignored"]?has_content)))>
+                                    <div><@formListHeaderField fieldNode isHeaderDialog/></div>
+                                </#if>
+                            </#list>
+                        </th></#list>
+                    </thead></table></div></td></tr>
+                </#if>
                 <#if needHeaderForm>
-                    </form>
-                    </tr>
                     <#if _dynamic_container_id?has_content>
                         <#-- if we have an _dynamic_container_id this was loaded in a dynamic-container so init ajaxForm; for examples see http://www.malsup.com/jquery/form/#ajaxForm -->
                         <script>$("#${headerFormId}").ajaxForm({ target: '#${_dynamic_container_id}', <#-- success: activateAllButtons, --> resetForm: false });</script>
                     </#if>
-                <#else>
-                    </tr>
                 </#if>
+                <#assign ownerForm = "">
             </thead>
         </#if>
-        <#if isMulti && !skipForm>
             <tbody>
-            <form name="${formId}" id="${formId}" method="post" action="${formListUrlInfo.url}">
-                <input type="hidden" name="moquiFormName" value="${formNode["@name"]}">
-                <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
-                <input type="hidden" name="_isMulti" value="true">
-        <#else>
-            <tbody>
-        </#if>
+            <#assign ownerForm = formId>
     </#if>
     <#if listHasContent><#list listObject as listEntry>
         <#assign listEntryIndex = listEntry_index>
         <#-- NOTE: the form-list.@list-entry attribute is handled in the ScreenForm class through this call: -->
-        ${sri.startFormListRow(formInstance, listEntry, listEntry_index, listEntry_has_next)}
-        <#if isMulti || skipForm>
-            <tr>
-        <#else>
-            <tr>
-            <form name="${formId}_${listEntryIndex}" id="${formId}_${listEntryIndex}" method="post" action="${formListUrlInfo.url}">
-                <input type="hidden" name="moquiSessionToken" value="${(ec.getWeb().sessionToken)!}">
-        </#if>
-        <#-- hidden fields -->
-        <#assign hiddenFieldList = formInstance.getListHiddenFieldList()>
-        <#list hiddenFieldList as hiddenField><@formListSubField hiddenField true false isMulti false/></#list>
+        ${sri.startFormListRow(formListInfo, listEntry, listEntry_index, listEntry_has_next)}
+        <tr>
+        <#if !(isMulti || skipForm)><#assign ownerForm = formId + "_" + listEntry_index></#if>
         <#-- actual columns -->
-        <#list formListColumnList as columnFieldList>
+        <#list mainColInfoList as columnFieldList>
             <td>
             <#list columnFieldList as fieldNode>
                 <@formListSubField fieldNode true false isMulti false/>
             </#list>
             </td>
         </#list>
-        <#if isMulti || skipForm>
+        <#if hasSubColumns><#assign aggregateSubList = listEntry["aggregateSubList"]!><#if aggregateSubList?has_content>
             </tr>
-        <#else>
-            </form>
+            <tr><td colspan="${numColumns}" class="form-list-sub-row-cell"><div class="form-list-sub-rows"><table class="table table-striped table-hover table-condensed">
+                <#list aggregateSubList as subListEntry><tr>
+                    ${sri.startFormListSubRow(formListInfo, subListEntry, subListEntry_index, subListEntry_has_next)}
+                    <#list subColInfoList as subColFieldList><td>
+                        <#list subColFieldList as fieldNode>
+                            <@formListSubField fieldNode true false isMulti false/>
+                        </#list>
+                    </td></#list>
+                    ${sri.endFormListSubRow()}
+                </tr></#list>
+            </table></div></td><#-- note no /tr, let following blocks handle it -->
+        </#if></#if>
+        </tr>
+        <#if !(isMulti || skipForm)>
             <script>
                 $("#${formId}_${listEntryIndex}").validate({ errorClass: 'help-block', errorElement: 'span',
                     highlight: function(element, errorClass, validClass) { $(element).parents('.form-group').removeClass('has-success').addClass('has-error'); },
                     unhighlight: function(element, errorClass, validClass) { $(element).parents('.form-group').removeClass('has-error').addClass('has-success'); }
                 });
             </script>
-            </tr>
+            <#assign ownerForm = "">
         </#if>
         ${sri.endFormListRow()}
     </#list></#if>
     <#assign listEntryIndex = "">
     ${sri.safeCloseList(listObject)}<#-- if listObject is an EntityListIterator, close it -->
     <#if !skipEnd>
-        <#if isMulti && !skipForm && listHasContent>
-            <tr><td colspan="${formListColumnList?size}">
+        <#if isMulti && listHasContent>
+            <tr><td colspan="${numColumns}">
                 <#list formNode["field"] as fieldNode><@formListSubField fieldNode false false true true/></#list>
             </td></tr>
-            </form>
-            </tbody>
-        <#else>
-            </tbody>
         </#if>
+            </tbody>
+            <#assign ownerForm = "">
         </table>
     </#if>
-    <#if isMulti && !skipStart && !skipForm>
+    <#if isMulti && !skipStart>
         <script>
             $("#${formId}").validate({ errorClass: 'help-block', errorElement: 'span',
                 highlight: function(element, errorClass, validClass) { $(element).parents('.form-group').removeClass('has-success').addClass('has-error'); },
@@ -230,6 +271,7 @@
             $('#${formId} [data-toggle="tooltip"]').tooltip();
         </script>
     </#if>
+    <#if hasSubColumns><script>makeColumnsConsistent('${formId}_table');</script></#if>
     <#if sri.doBoundaryComments()><!-- END   form-list[@name=${.node["@name"]}] --></#if>
     <#assign skipForm = false>
 </#macro>
@@ -320,9 +362,10 @@
      </#if>
  </#macro>
 
-<#macro paginationHeader formInstance formId isHeaderDialog formListColumnList>
-    <#assign formNode = formInstance.getFtlFormNode()>
-    <#assign numColumns = (formListColumnList?size)!100>
+<#macro paginationHeader formListInfo formId isHeaderDialog>
+    <#assign formNode = formListInfo.getFormNode()>
+    <#assign mainColInfoList = formListInfo.getMainColInfo()>
+    <#assign numColumns = (mainColInfoList?size)!100>
     <#if numColumns == 0><#assign numColumns = 100></#if>
     <#assign isSavedFinds = formNode["@saved-finds"]! == "true">
     <#assign isSelectColumns = formNode["@select-columns"]! == "true">
@@ -332,7 +375,7 @@
         <tr class="form-list-nav-row"><th colspan="${numColumns}">
         <nav class="form-list-nav">
             <#if isSavedFinds>
-                <#assign userFindInfoList = formInstance.getUserFormListFinds(ec)>
+                <#assign userFindInfoList = formListInfo.getUserFormListFinds(ec)>
                 <#if userFindInfoList?has_content>
                     <#assign quickSavedFindId = formId + "_QuickSavedFind">
                     <select id="${quickSavedFindId}">
@@ -342,11 +385,11 @@
                             <#assign formListFind = userFindInfo.formListFind>
                             <#assign findParameters = userFindInfo.findParameters>
                             <#assign doFindUrl = sri.getScreenUrlInstance().cloneUrlInstance().addParameters(findParameters).removeParameter("pageIndex").removeParameter("moquiFormName").removeParameter("moquiSessionToken")>
-                            <option value="${formListFind.formListFindId}" <#if formListFind.formListFindId == ec.getContext().formListFindId!>selected="selected"</#if>data-action="${doFindUrl.urlWithParams}">${userFindInfo.description?html}</option>
+                            <option value="${formListFind.formListFindId}"<#if formListFind.formListFindId == ec.getContext().formListFindId!> selected="selected"</#if> data-action="${doFindUrl.urlWithParams}">${userFindInfo.description?html}</option>
                         </#list>
                     </select>
                     <script>
-                        $("#${quickSavedFindId}").select2({ minimumResultsForSearch:10, theme:'bootstrap', placeholder:'${ec.getL10n().localize("Saved Finds")}' });
+                        $("#${quickSavedFindId}").select2({ ${select2DefaultOptions}, placeholder:'${ec.getL10n().localize("Saved Finds")}' });
                         $("#${quickSavedFindId}").on('select2:select', function(evt) {
                             var dataAction = $(evt.params.data.element).attr("data-action");
                             if (dataAction) window.open(dataAction, "_self");
